@@ -6,7 +6,7 @@ BEGIN { chdir "t" if -d "t"; }
 use lib '../blib/arch', '../blib/lib';
 
 use Test;
-BEGIN { plan tests => 181, todo => [] }
+BEGIN { plan tests => 192, todo => [] }
 
 use Math::Business::BlackScholes (
   qw/call_price put_price call_put_prices/,
@@ -14,7 +14,7 @@ use Math::Business::BlackScholes (
 );
 
 my $tol=2e-5; # Tolerance for floating point comparisons
-$Math::Business::BlackScholes::max_iter=12;
+$Math::Business::BlackScholes::max_iter=20;
 
 sub ae {
 	my $lhs=shift;
@@ -87,11 +87,12 @@ check(1.97414, 0.05, 24.41, 0.228478, 22.5, 0.0657, 0.015, 0.005); #89-99
 
 check(1.71387, 1.41833, 10, 0.4, 10, 1, 0.03, 0); #100-110
 check(1.71387, 1.41833, 10, 0.4, 10, 1, 0.03); #111-121
+check(1.15278, 51.8, 28.30, 0.72524, 80, 1.00274, 0.015, 0.005); # 122-132
 
 # Each call to checkwarn() is 12 ok()'s.
-checkwarn( 0, 0, 10, -0.4, 10, 0, 0.03, 0.01); #122-133
-checkwarn(20, 0, 10, 0.4, -10, 0, 0.03, 0.01); #134-145
-checkwarn( 0, 0, 10, 0.4, 10, 0, -0.03, 0.01); #146-157
-checkwarn( 0, 0, 10, 0.4, 10, 0, 0.03, -0.01); #158-169
-checkwarn(1.65382, 1.45777, 10, 0.4, 10, 1, 0.03, 0.01, 999); #170-181
+checkwarn( 0, 0, 10, -0.4, 10, 0, 0.03, 0.01); #133-144
+checkwarn(20, 0, 10, 0.4, -10, 0, 0.03, 0.01); #145-156
+checkwarn( 0, 0, 10, 0.4, 10, 0, -0.03, 0.01); #157-168
+checkwarn( 0, 0, 10, 0.4, 10, 0, 0.03, -0.01); #169-180
+checkwarn(1.65382, 1.45777, 10, 0.4, 10, 1, 0.03, 0.01, 999); #181-192
 

@@ -213,7 +213,7 @@ use strict;
 BEGIN {
 	use Exporter;
 	use vars qw/$VERSION @ISA @EXPORT_OK/;
-	$VERSION = 0.05;
+	$VERSION = 0.06;
 	@ISA = qw/Exporter/;
 	@EXPORT_OK = (
 	  qw/call_price put_price call_put_prices/,
@@ -396,7 +396,7 @@ sub _implied_volatility {
 		else {
 			($sigma_high, $price_high)=($sigma, $price);
 		}
-		my $npd1=$pipi * exp(-0.5*$d1*$d1);
+		my $npd1=defined($d1) ? $pipi * exp(-0.5*$d1*$d1) : 0.0;
 		my $vega=$seyt * $st * $npd1;
 		return ($sigma, $vega==0.0 ? undef : $tol/$vega, $n) if $done;
 		last if $vega==0.0;
