@@ -97,6 +97,9 @@ reference option whose price exceeds its intrinsic value by an amount larger
 than or comparable to the absolute difference of the market price and the
 strike price, and it is undefined if the price of the reference option is
 less than what would be calculated with zero volatility.
+If the price of the reference option is greater than what would be calculated
+with infinite volatility, then both the result and the error estimate are
+undefined.
 An exception is thrown if it fails to converge within
 C<$Math::Business::BlackScholes::max_iter> (100 by default) iterations.
 An analogous implied_volatility_put() is also available.
@@ -196,6 +199,11 @@ L<Math::CDF|Math::CDF>
 
 Anders Johnson <F<anders@ieee.org>>
 
+=head1 ACKNOWLEDGMENTS
+
+Thanks to Richard Solberg for helping to debug the implied volatility
+functions.
+
 =cut
 
 package Math::Business::BlackScholes;
@@ -205,7 +213,7 @@ use strict;
 BEGIN {
 	use Exporter;
 	use vars qw/$VERSION @ISA @EXPORT_OK/;
-	$VERSION = 0.04;
+	$VERSION = 0.05;
 	@ISA = qw/Exporter/;
 	@EXPORT_OK = (
 	  qw/call_price put_price call_put_prices/,
@@ -357,54 +365,52 @@ sub _implied_volatility {
 	  croak("Positive strike price required to determine volatility");
 	$term>0.0 || croak("Positive term required to determine volatility");
 	$option_price>0.0 || croak("Option price must be positive");
-	my ($price, $seyt, $xert, $d1, $st, $lsx) = _precompute(
+	my $sigma_low=0.0;
+	my ($price_low, $seyt, $xert, $d1, $st, $lsx) = _precompute(
 	  $put, $market, 0.0, @_[2..$#_]
 	);
-	return wantarray ? (0.0, undef, 0) : 0.0 if $price > $option_price;
-	$pipi=1/sqrt(4*atan2(1,0)) unless defined $pipi;
-	my $sigma=($option_price)/(0.398*$market*$st);
+	return wantarray ? (0.0, undef, 0) : 0.0 if $price_low > $option_price;
+	return wantarray ? (undef, undef, 0) : undef
+	  if $option_price > ($put ? $xert : $seyt);
+	my $sigma_high=($option_price)/(0.398*$market*$st);
+	my $price_high;
 	my $n=0;
-	my $lastdiff;
 	while($n<$max_iter) {
-		($price, $seyt, $xert, $d1) = _precompute1(
-		  $st, $lsx, $put, $market, $sigma, @_[2..$#_]
+		($price_high, $seyt, $xert, $d1) = _precompute1(
+		  $st, $lsx, $put, $market, $sigma_high, @_[2..$#_]
 		);
+		last if $price_high > $option_price-$tol;
+		($sigma_low, $price_low) = ($sigma_high, $price_high);
+		$sigma_high += $sigma_high;
+		$n++;
+	}
+	$pipi=1/sqrt(4*atan2(1,0)) unless defined $pipi;
+	my ($sigma, $price)=($sigma_high, $price_high);
+	while(1) {
 		my $diff=$option_price - $price;
  		my $done=abs($diff) < $tol;
 		return $sigma if $done && !wantarray;
+		if($diff>0.0) {
+			($sigma_low, $price_low)=($sigma, $price);
+		}
+		else {
+			($sigma_high, $price_high)=($sigma, $price);
+		}
 		my $npd1=$pipi * exp(-0.5*$d1*$d1);
 		my $vega=$seyt * $st * $npd1;
+		return ($sigma, $vega==0.0 ? undef : $tol/$vega, $n) if $done;
 		last if $vega==0.0;
-		return ($sigma, $tol/$vega, $n) if $done;
-		last if defined($lastdiff) && abs($diff) > abs($lastdiff);
-		$lastdiff=$diff;
-		my $sigma_next = $sigma + $diff/$vega;
-		last if $sigma_next<=0.0;
-		$sigma = $sigma_next;
+		$sigma+=$diff/$vega;
+		$sigma=$sigma_low if $sigma<$sigma_low;
+		last if $diff>0.0 && $sigma>0.5*($sigma_low+$sigma_high);
 		$n++;
-	}
-	confess "_implied_volatility() failed to converge" unless $n<$max_iter;
-
-	# If Newton-Raphson fails, try the bisection method
-	my ($sigma_low, $sigma_high, $price_low, $price_high) =
-	  ($sigma, $sigma, $price, $price);
-	if($price > $option_price) {
-		$sigma_low = 0.0;
-		($price_low) = _precompute1(
-		  $st, $lsx, $put, $market, $sigma_low, @_[2..$#_]
+		last if $n>=$max_iter;
+		($price, $seyt, $xert, $d1) = _precompute1(
+		  $st, $lsx, $put, $market, $sigma, @_[2..$#_]
 		);
 	}
-	else {
-		while(1) {
-			($price_high) = _precompute1(
-			  $st, $lsx, $put, $market, $sigma_high, @_[2..$#_]
-			);
-			last if $price_high > $option_price;
-			($sigma_low, $price_low) = ($sigma_high, $price_high);
-			$sigma_high += $sigma_high;
-		}
-	}
-	$n=0;
+
+	# If Newton-Raphson fails, try the bisection method
 	while($n<$max_iter) {
 		$sigma=0.5 * ($sigma_low + $sigma_high);
 		($price) = _precompute1(

@@ -6,7 +6,7 @@ BEGIN { chdir "t" if -d "t"; }
 use lib '../blib/arch', '../blib/lib';
 
 use Test;
-BEGIN { plan tests => 2, todo => [] }
+BEGIN { plan tests => 6, todo => [] }
 
 use Math::Business::BlackScholes qw/historical_volatility/;
 
@@ -42,4 +42,19 @@ ok(ae(Math::Business::BlackScholes::historical_volatility(
   \@closing_prices, 251
 ), 1.27506409));
 
+ok(!defined Math::Business::BlackScholes::implied_volatility_call(
+  90, 91, 100, 1, 0
+));
+my ($x)=Math::Business::BlackScholes::implied_volatility_call(
+  90, 89, 100, 1, 0
+);
+ok(defined $x);
+
+($x)=Math::Business::BlackScholes::implied_volatility_put(
+  100, 91, 90, 1, 0
+);
+ok(!defined $x);
+ok(defined Math::Business::BlackScholes::implied_volatility_put(
+  100, 89, 90, 1, 0
+));
 

@@ -21,3 +21,4 @@ Version	Date		Notes
 0.02	8/9/2002	Renamed to Math::Business::BlackScholes
 0.03	10/29/2002	Added historical_volatility() and implied_volatility*()
 0.04	5/15/2003	_implied_volatility() convergence fixes
+0.05	5/30/2003	Even more convergence fixes
