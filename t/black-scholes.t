@@ -6,7 +6,7 @@ BEGIN { chdir "t" if -d "t"; }
 use lib '../blib/arch', '../blib/lib';
 
 use Test;
-BEGIN { plan tests => 159, todo => [] }
+BEGIN { plan tests => 170, todo => [] }
 
 use Math::Business::BlackScholes (
   qw/call_price put_price call_put_prices/,
@@ -14,7 +14,7 @@ use Math::Business::BlackScholes (
 );
 
 my $tol=2e-5; # Tolerance for floating point comparisons
-$Math::Business::BlackScholes::max_iter=10;
+$Math::Business::BlackScholes::max_iter=12;
 
 sub ae {
 	my $lhs=shift;
@@ -55,14 +55,10 @@ sub check1 {
 	ok(ae($put10,$put1));
 
 	if($_[0]*$_[2]>0 && $_[3]>0) {
-		my ($s, $e, $c)=implied_volatility_call(
-		  $_[0], $call1, @_[2..$#_]
-		);
-		ok(ae($s, $_[1], 2.0*$e/$tol) && $c<10);
-		ok(ae(
-		  scalar implied_volatility_put($_[0], $put1, @_[2..$#_]),
-		  $_[1], 2.0*$e/$tol
-		));
+		my ($s, $e)=implied_volatility_call($_[0], $call1, @_[2..$#_]);
+		ok(ae($s, $_[1], 2.0*$e/$tol));
+		$s=implied_volatility_put($_[0], $put1, @_[2..$#_]);
+		ok(ae($s, $_[1], 2.0*$e/$tol));
 	}
 	else {
 		ok(1); ok(1);
@@ -86,6 +82,7 @@ check(1.16364, 1.06464, 10, 0.4, 10, 0.5, 0.03, 0.01);
 check(1.78436, 1.30150, 10, 0.4, 10, 1, 0.06, 0.01);
 check(1.59531, 1.49778, 10, 0.4, 10, 1, 0.03, 0.02);
 check(0.96459, 2.13108, -10, 0.4, -9, 1, 0.03, 0.01);
+check(4.30010, 0.046282, 34.25, 0.668419, 30, 0.01369, 0.015, 0.005);
 
 check(1.71387, 1.41833, 10, 0.4, 10, 1, 0.03, 0);
 check(1.71387, 1.41833, 10, 0.4, 10, 1, 0.03);

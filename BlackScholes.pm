@@ -83,7 +83,8 @@ The square-root of this yearly variance is returned.
 
 implied_volatility_call() computes the implied volatility based on the known
 trading price of a "reference" call option on the same underlying security with
-a different strike price and/or term, using the Newton-Raphson method.
+a different strike price and/or term, using the Newton-Raphson method, or the
+bisection method if it fails to converge otherwise.
 It's invoked like call_price(), except that the second argument is taken as
 the price of the call option, and the volatility is returned.
 You can override the default option price tolerance of 1e-4 by passing an
@@ -204,7 +205,7 @@ use strict;
 BEGIN {
 	use Exporter;
 	use vars qw/$VERSION @ISA @EXPORT_OK/;
-	$VERSION = 0.03;
+	$VERSION = 0.04;
 	@ISA = qw/Exporter/;
 	@EXPORT_OK = (
 	  qw/call_price put_price call_put_prices/,
@@ -363,6 +364,7 @@ sub _implied_volatility {
 	$pipi=1/sqrt(4*atan2(1,0)) unless defined $pipi;
 	my $sigma=($option_price)/(0.398*$market*$st);
 	my $n=0;
+	my $lastdiff;
 	while($n<$max_iter) {
 		($price, $seyt, $xert, $d1) = _precompute1(
 		  $st, $lsx, $put, $market, $sigma, @_[2..$#_]
@@ -370,10 +372,55 @@ sub _implied_volatility {
 		my $diff=$option_price - $price;
  		my $done=abs($diff) < $tol;
 		return $sigma if $done && !wantarray;
-		my $npd1=$pipi * exp(0.5*$d1*$d1);
+		my $npd1=$pipi * exp(-0.5*$d1*$d1);
 		my $vega=$seyt * $st * $npd1;
+		last if $vega==0.0;
 		return ($sigma, $tol/$vega, $n) if $done;
-		$sigma += $diff/$vega;
+		last if defined($lastdiff) && abs($diff) > abs($lastdiff);
+		$lastdiff=$diff;
+		my $sigma_next = $sigma + $diff/$vega;
+		last if $sigma_next<=0.0;
+		$sigma = $sigma_next;
+		$n++;
+	}
+	confess "_implied_volatility() failed to converge" unless $n<$max_iter;
+
+	# If Newton-Raphson fails, try the bisection method
+	my ($sigma_low, $sigma_high, $price_low, $price_high) =
+	  ($sigma, $sigma, $price, $price);
+	if($price > $option_price) {
+		$sigma_low = 0.0;
+		($price_low) = _precompute1(
+		  $st, $lsx, $put, $market, $sigma_low, @_[2..$#_]
+		);
+	}
+	else {
+		while(1) {
+			($price_high) = _precompute1(
+			  $st, $lsx, $put, $market, $sigma_high, @_[2..$#_]
+			);
+			last if $price_high > $option_price;
+			($sigma_low, $price_low) = ($sigma_high, $price_high);
+			$sigma_high += $sigma_high;
+		}
+	}
+	$n=0;
+	while($n<$max_iter) {
+		$sigma=0.5 * ($sigma_low + $sigma_high);
+		($price) = _precompute1(
+		  $st, $lsx, $put, $market, $sigma, @_[2..$#_]
+		);
+		if(abs($option_price - $price) < $tol) {
+			return wantarray ?
+  ($sigma, $tol * ($sigma_high-$sigma_low) / ($price_high-$price_low), $n) :
+			  $sigma;
+		}
+		if($price > $option_price) {
+			($sigma_high, $price_high) = ($sigma, $price);
+		}
+		else {
+			($sigma_low, $price_low) = ($sigma, $price);
+		}
 		$n++;
 	}
 	confess "_implied_volatility() failed to converge";
