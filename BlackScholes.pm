@@ -9,11 +9,21 @@ Math::Business::BlackScholes - Black-Scholes option price model functions
 
 =head1 SYNOPSIS
 
-	use Math::Business::BlackScholes qw/call_price call_put_prices/;
+	use Math::Business::BlackScholes
+	  qw/call_price call_put_prices implied_volatility_call/;
+
+	my $volatility=implied_volatility_call(
+	  $current_market_price, $option_price_in, $strike_price_in,
+	  $remaining_term_in, $interest_rate, $fractional_yield
+	);
 
 	my $call=call_price(
 	  $current_market_price, $volatility, $strike_price,
 	  $remaining_term, $interest_rate, $fractional_yield
+	);
+
+	$volatility=Math::Business::BlackScholes::historical_volatility(
+	  \@closing_prices, 251
 	);
 
 	my $put=Math::Business::BlackScholes::put_price(
@@ -45,7 +55,7 @@ C<$volatility> is the standard deviation of the probability distribution of
 the natural logarithm of the stock price one year in the future.
 C<$strike_price> is the strike price of the option.
 C<$remaining_term> is the time remaining until the option expires, in years.
-C<$interest_rate> is the risk-free interest rate (per year).
+C<$interest_rate> is the risk-free interest rate (per year) as a fraction.
 C<$fractional_yield> is the fraction of the stock price that the stock
 yields in dividends per year; it is assumed to be zero if unspecified.
 
@@ -56,6 +66,39 @@ historical data.
 C<$interest_rate> is traditionally equal to the current T-bill rate.
 The model assumes that these parameters are stable over the term of the
 option.
+
+C<$volatility> (a.k.a. I<sigma>) is sometimes expressed as a percentage,
+which is misleading because it's not a ratio.
+If you have it as a percentage, then you'll need to divide it by 100 before
+passing it to this module.
+Ditto for C<$interest_rate> and C<$fractional_yield>.
+
+Two ways to estimate C<$volatility> are provided.
+historical_volatility() takes an arrayref of at least 10 (preferably 100 or
+more) consecutive daily closing prices of the underlying security, in either
+chronological or reverse chronological order.
+It then multiplies the variance of the log of day-to-day returns by the number
+of trading days per year specified by the second argument (or 250 by default).
+The square-root of this yearly variance is returned.
+
+implied_volatility_call() computes the implied volatility based on the known
+trading price of a "reference" call option on the same underlying security with
+a different strike price and/or term, using the Newton-Raphson method.
+It's invoked like call_price(), except that the second argument is taken as
+the price of the call option, and the volatility is returned.
+You can override the default option price tolerance of 1e-4 by passing an
+additional argument beyond C<$fractional_yield>.
+If called in an array context, the second element of the return value is an
+estimate of the error magnitude, and the third element is the number of
+iterations required to obtain the result.
+The error magnitude may be quite large unless you use a
+reference option whose price exceeds its intrinsic value by an amount larger
+than or comparable to the absolute difference of the market price and the
+strike price, and it is undefined if the price of the reference option is
+less than what would be calculated with zero volatility.
+An exception is thrown if it fails to converge within
+C<$Math::Business::BlackScholes::max_iter> (100 by default) iterations.
+An analogous implied_volatility_put() is also available.
 
 =head2 American Options
 
@@ -107,13 +150,23 @@ the value of a single dividend.
 
 =item *
 
-The fractional computational error of call_price() is usually negligible.
-However, while the computational error of put_price() is typically small
-in comparison to the current market price, it might be significant in
-comparison to the result.
+The fractional computational error of call_price() and put_price() is
+usually negligible.
+However, while the computational error of second result of call_put_prices()
+is typically small in comparison to the current market price, it might be
+significant in comparison to the result itself.
 That's probably unimportant for most purposes.
-(To correct this problem would require increasing both complexity and
-execution time.)
+
+=item *
+
+historical_volatility() tends to produce misleading results because the
+behavior of the underlying security is most likely not truly log-normal.
+In particular, the price varies predictably after a dividend is distributed,
+and the daily variance is expected to be greater after financial announcements
+are made.
+Also, a large number of data points are required to obtain statistically
+meaningful results, but having a large number of data points implies that the
+results are outdated.
 
 =item *
 
@@ -151,19 +204,54 @@ use strict;
 BEGIN {
 	use Exporter;
 	use vars qw/$VERSION @ISA @EXPORT_OK/;
-	$VERSION = 0.02;
+	$VERSION = 0.03;
 	@ISA = qw/Exporter/;
-	@EXPORT_OK = qw/call_price put_price call_put_prices/;
+	@EXPORT_OK = (
+	  qw/call_price put_price call_put_prices/,
+	  qw/historical_volatility/,
+	  qw/implied_volatility_call implied_volatility_put/
+	);
 }
 
 use Math::CDF qw/pnorm/;
 use Carp;
 
 # Don't call this directly -- it might change without notice
-sub _precompute {
-	@_<5 && carp("Too few arguments");
-	my ($market, $sigma, $strike, $term, $interest, $yield)=@_;
+sub _precompute1 {
+	my (
+	  $st, $lsx, $put, $market, $sigma, $strike, $term, $interest, $yield
+	)=@_;
 	$yield=0.0 unless defined $yield;
+
+	my $seyt=$market * exp(-$yield * $term);
+	my $xert=$strike * exp(-$interest * $term);
+	my $d1;
+	my $nd1;
+	my $nd2;
+	if($sigma==0.0 || $term==0.0 || $market==0.0 || $strike<=0.0) {
+		if($seyt > $xert) {
+			($nd1, $nd2) = $put ? (0.0, 0.0) : (1.0, 1.0);
+		}
+		else {
+			($nd1, $nd2) = $put ? (-1.0, -1.0) : (0.0, 0.0);
+		}
+	}
+	else {
+		my $ssrt=$sigma * $st;
+		$d1=(
+		  $lsx + ($interest - $yield + 0.5*$sigma*$sigma)*$term
+		) / $ssrt;
+		my $d2=$d1 - $ssrt;
+		($nd1, $nd2) = $put ?
+		  (-pnorm(-$d1), -pnorm(-$d2)) : (pnorm($d1), pnorm($d2));
+	}
+	return ($seyt*$nd1 - $xert*$nd2, $seyt, $xert, $d1);
+}
+
+# Don't call this directly -- it might change without notice
+sub _precompute {
+	@_<6 && carp("Too few arguments");
+	my ($put, $market, $sigma, $strike, $term, $interest, $yield)=@_;
 
 	$market>=0.0 || croak("Negative market price");
 	if($sigma<0.0) {
@@ -173,50 +261,29 @@ sub _precompute {
 	$strike>=0.0 || carp("Negative strike price");
 	$term>=0.0 || croak("Negative remaining term");
 	$interest>=0.0 || carp("Negative interest rate");
-	$yield>=0.0 || carp("Negative yield");
-	@_>6 && carp("Ignoring additional arguments");
+	!defined($yield) || $yield>=0.0 || carp("Negative yield");
+	@_>7 && carp("Ignoring additional arguments");
 
-	my $seyt=$market * exp(-$yield * $term);
-	my $xert=$strike * exp(-$interest * $term);
-	my $nd1;
-	my $nd2;
-	if($sigma==0.0 || $term==0.0 || $market==0.0 || $strike<=0.0) {
-		if($seyt > $xert) {
-			$nd1=1.0;
-			$nd2=1.0;
-		}
-		else {
-			$nd1=0.0;
-			$nd2=0.0;
-		}
-	}
-	else {
-		my $ssrt=$sigma * sqrt($term);
-		my $d1=(
-		  log($market / $strike) +
-		  ($interest - $yield + $sigma*$sigma/2.0)*$term
-		) / $ssrt;
-		my $d2=$d1 - $ssrt;
-		$nd1=pnorm($d1);
-		$nd2=pnorm($d2);
-	}
-	return ($seyt, $nd1, $xert, $nd2);
+	my $st=sqrt($term);
+	my $sx=$market / $strike;
+	my $lsx=log($sx) if $sx>0;
+	return (_precompute1($st, $lsx, @_), $st, $lsx);
 }
 
 sub call_price {
 	if($_[0]<0.0) {
 		return put_price(-$_[0], $_[1], -$_[2], @_[3..$#_]);
 	}
-	my ($seyt, $nd1, $xert, $nd2) = _precompute(@_);
-	return $seyt*$nd1 - $xert*$nd2;
+	my ($price) = _precompute(0, @_);
+	return $price;
 }
 
 sub put_price {
 	if($_[0]<0.0) {
 		return call_price(-$_[0], $_[1], -$_[2], @_[3..$#_]);
 	}
-	my ($seyt, $nd1, $xert, $nd2) = _precompute(@_);
-	return $seyt*($nd1 - 1.0) - $xert*($nd2 - 1.0);
+	my ($price) = _precompute(1, @_);
+	return $price;
 }
 
 sub call_put_prices {
@@ -226,9 +293,90 @@ sub call_put_prices {
 		);
 		return ($call, $put);
 	}
-	my ($seyt, $nd1, $xert, $nd2) = _precompute(@_);
-	my $call=$seyt*$nd1 - $xert*$nd2;
+	my ($call, $seyt, $xert) = _precompute(0, @_);
 	return ($call, $call - $seyt + $xert);
+}
+
+sub historical_volatility {
+	my ($close, $days)=@_;
+	$days=250 unless defined $days;
+	my @close=@$close; # Don't clobber the argument
+	if(@close<10) {
+		croak "Not enough data points"
+	}
+	my ($tot, $sqtot, $n)=(0.0, 0.0, 0);
+	my $last=log(shift(@close));
+	while(@close) {
+		my $next=log(shift(@close));
+		my $ret=$next-$last;
+		$tot+=$ret;
+		$sqtot+=$ret*$ret;
+		$n++;
+		$last=$next;
+	}
+	return sqrt($days * ($sqtot - $tot*$tot/$n)/($n-1));
+}
+
+sub implied_volatility_call {
+	if($_[0]<0.0) {
+		return implied_volatility_put(
+		  -$_[0], $_[1], -$_[2], @_[3..$#_]
+		);
+	}
+	return _implied_volatility(0, @_);
+}
+
+sub implied_volatility_put {
+	if($_[0]<0.0) {
+		return implied_volatility_call(
+		  -$_[0], $_[1], -$_[2], @_[3..$#_]
+		);
+	}
+	return _implied_volatility(1, @_);
+}
+
+use vars qw/$max_iter/;
+$max_iter=100;
+my $pipi; # becomes 1/sqrt(2*PI) when needed
+# Don't call this directly -- it might change without notice
+sub _implied_volatility {
+	my $put=shift;
+	my ($market, $option_price, $strike, $term, $interest, $yield, $tol)=@_;
+	$yield=0 unless defined $yield;
+	if(@_>7) {
+		carp("Ignoring additional arguments");
+		pop(@_) while @_>7;
+	}
+	pop(@_) if defined $tol;
+	$tol=1e-4 unless defined $tol;
+	$tol=abs($tol);
+	$market>0.0 ||
+	  croak("Positive market price required to determine volatility");
+	$strike>0.0 ||
+	  croak("Positive strike price required to determine volatility");
+	$term>0.0 || croak("Positive term required to determine volatility");
+	$option_price>0.0 || croak("Option price must be positive");
+	my ($price, $seyt, $xert, $d1, $st, $lsx) = _precompute(
+	  $put, $market, 0.0, @_[2..$#_]
+	);
+	return wantarray ? (0.0, undef, 0) : 0.0 if $price > $option_price;
+	$pipi=1/sqrt(4*atan2(1,0)) unless defined $pipi;
+	my $sigma=($option_price)/(0.398*$market*$st);
+	my $n=0;
+	while($n<$max_iter) {
+		($price, $seyt, $xert, $d1) = _precompute1(
+		  $st, $lsx, $put, $market, $sigma, @_[2..$#_]
+		);
+		my $diff=$option_price - $price;
+ 		my $done=abs($diff) < $tol;
+		return $sigma if $done && !wantarray;
+		my $npd1=$pipi * exp(0.5*$d1*$d1);
+		my $vega=$seyt * $st * $npd1;
+		return ($sigma, $tol/$vega, $n) if $done;
+		$sigma += $diff/$vega;
+		$n++;
+	}
+	confess "_implied_volatility() failed to converge";
 }
 
 1;

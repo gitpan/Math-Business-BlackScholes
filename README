@@ -19,3 +19,4 @@ Version	Date		Notes
 -------	----		-----
 0.01	2/2/2002	First Release (as Math::Business::BlackSch)
 0.02	8/9/2002	Renamed to Math::Business::BlackScholes
+0.03	10/29/2002	Added historical_volatility() and implied_volatility*()
