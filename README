@@ -1,0 +1,21 @@
+Math::Business::BlackScholes - Black-Scholes option price model functions
+
+Copyright (c) 2002 Anders Johnson. All rights reserved. This program is free
+software; you can redistribute it and/or modify it under the same terms as
+Perl itself. The author categorically disclaims any liability for this
+software.
+
+Requires the Math::CDF module.
+
+This is a standard perl module. To install:
+
+  % perl -MCPAN -e 'install Math::CDF'
+  % perl Makefile.PL  # optionally "perl Makefile.PL PREFIX=/...", etc.
+  % make
+  % make test
+  % make install
+
+Version	Date		Notes
+-------	----		-----
+0.01	2/2/2002	First Release (as Math::Business::BlackSch)
+0.02	8/9/2002	Renamed to Math::Business::BlackScholes
