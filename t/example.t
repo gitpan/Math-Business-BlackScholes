@@ -48,5 +48,11 @@ my ($c, $p)=call_put_prices(
   $remaining_term, $interest_rate, $fractional_yield
 );
 
+my $call_discrete_div=call_price(
+  $current_market_price, $volatility, $strike_price,
+  $remaining_term, $interest_rate,
+  { 0.3 => 0.35, 0.55 => 0.35 }
+);
+
 ok(1);
 

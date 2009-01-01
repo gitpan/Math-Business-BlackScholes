@@ -1,6 +1,6 @@
-# Copyright (c) 2002 Anders Johnson. All rights reserved. This program is free
-# software; you can redistribute it and/or modify it under the same terms as
-# Perl itself. The author categorically disclaims any liability for this
+# Copyright (c) 2002-2008 Anders Johnson. All rights reserved. This program is
+# free software; you can redistribute it and/or modify it under the same terms
+# as Perl itself. The author categorically disclaims any liability for this
 # software.
 
 =head1 NAME
@@ -36,6 +36,12 @@ Math::Business::BlackScholes - Black-Scholes option price model functions
 	  $remaining_term, $interest_rate, $fractional_yield
 	);
 
+	my $call_discrete_div=call_price(
+	  $current_market_price, $volatility, $strike_price,
+	  $remaining_term, $interest_rate,
+	  { 0.3 => 0.35, 0.55 => 0.35 }
+	);
+
 =head1 DESCRIPTION
 
 Estimates the fair market price of a European stock option
@@ -58,6 +64,21 @@ C<$remaining_term> is the time remaining until the option expires, in years.
 C<$interest_rate> is the risk-free interest rate (per year) as a fraction.
 C<$fractional_yield> is the fraction of the stock price that the stock
 yields in dividends per year; it is assumed to be zero if unspecified.
+
+=head2 Discrete Dividends
+
+If C<$fractional_yield> is specified as a number, then the actual timing of
+the ex-dividend dates relative to the current time and the option expiration
+time can affect the option price by as much as the value of a single dividend.
+
+C<$fractional_yield> may instead be specified as a hashref, each key of which
+is the remaining amount of time before the dividend is paid, in years,
+and each value of which is the dividend amount.
+This produces more accurate results when the dividends that will be assigned
+during the term of the option are reliably predictable.
+The ex-dividend date of each dividend so represented is assumed to occur
+within the I<remaining> term of the option, even if the dividend is paid
+after the term expires.
 
 =head2 Determining Parameter Values
 
@@ -108,13 +129,11 @@ An analogous implied_volatility_put() is also available.
 
 Whereas a European stock option may be exercised only when it expires,
 an American option may be exercised any time prior to its expiration.
-The price of an American option is usually the same as
-the price of the corresponding European option, because the expected value
-of an option is almost always greater than its intrinsic value.
-However, if the dividend yield (in the case of a call option) or interest
-rate (in the case of a put option) is high, or if there are
-tax considerations related to the timing of the exercise, then an American
-option may be more valuable to the holder.
+The price of an American option can be approximated as the maximum price
+of similar European options over all possible remaining terms not greater
+than the remaining term of the American option.
+This maximum usually occurs at the end of the remaining term, or just before
+or just after the final ex-dividend date within the remaining term.
 
 =head2 Negative Market Value
 
@@ -144,13 +163,6 @@ To disable such messages, try this:
 =item *
 
 This module requires C<Math::CDF>.
-
-=item *
-
-The model assumes that dividends are distributed continuously.
-In reality, the timing of the distribution relative to the current time
-and the option expiration time can affect the option price by as much as
-the value of a single dividend.
 
 =item *
 
@@ -189,6 +201,12 @@ unspecified portability problems for DOS and other 8.3 filesystems,
 but the consensus of the Perl community was that it is more important
 to have a descriptive name.
 
+=item *
+
+You can't passed a blessed reference with the C<0+> (numeric conversion)
+operator overloaded (see L<overload>) as a numerical C<$fractional_yield>.
+Instead, convert it into a numeric scalar before calling these functions.
+
 =back
 
 =head1 SEE ALSO
@@ -213,7 +231,7 @@ use strict;
 BEGIN {
 	use Exporter;
 	use vars qw/$VERSION @ISA @EXPORT_OK/;
-	$VERSION = 0.06;
+	$VERSION = 1.01;
 	@ISA = qw/Exporter/;
 	@EXPORT_OK = (
 	  qw/call_price put_price call_put_prices/,
@@ -228,16 +246,16 @@ use Carp;
 # Don't call this directly -- it might change without notice
 sub _precompute1 {
 	my (
-	  $st, $lsx, $put, $market, $sigma, $strike, $term, $interest, $yield
+	  $st, $lsx, $put, $adj_market, $sigma, $strike, $term,
+	  $interest, $adj_yield
 	)=@_;
-	$yield=0.0 unless defined $yield;
 
-	my $seyt=$market * exp(-$yield * $term);
+	my $seyt=$adj_market * exp(-$adj_yield * $term);
 	my $xert=$strike * exp(-$interest * $term);
 	my $d1;
 	my $nd1;
 	my $nd2;
-	if($sigma==0.0 || $term==0.0 || $market==0.0 || $strike<=0.0) {
+	if($sigma==0.0 || $term==0.0 || $adj_market==0.0 || $strike<=0.0) {
 		if($seyt > $xert) {
 			($nd1, $nd2) = $put ? (0.0, 0.0) : (1.0, 1.0);
 		}
@@ -248,7 +266,7 @@ sub _precompute1 {
 	else {
 		my $ssrt=$sigma * $st;
 		$d1=(
-		  $lsx + ($interest - $yield + 0.5*$sigma*$sigma)*$term
+		  $lsx + ($interest - $adj_yield + 0.5*$sigma*$sigma)*$term
 		) / $ssrt;
 		my $d2=$d1 - $ssrt;
 		($nd1, $nd2) = $put ?
@@ -270,13 +288,34 @@ sub _precompute {
 	$strike>=0.0 || carp("Negative strike price");
 	$term>=0.0 || croak("Negative remaining term");
 	$interest>=0.0 || carp("Negative interest rate");
-	!defined($yield) || $yield>=0.0 || carp("Negative yield");
+	my ($adj_market, $adj_yield) = ($market, $yield);
+	if(ref $yield) {
+		my $warned;
+		for my $when (keys %$yield) {
+			unless($when>=0) {
+				unless($warned++) {
+					carp("Negative dividend time");
+				}
+			}
+			$adj_market -= $yield->{$when}*exp(-$interest * $when);
+		}
+		$adj_yield=0.0;
+	}
+	elsif(!defined $yield) {
+		$adj_yield=0.0;
+	}
+	$adj_yield>=0.0 || carp("Negative yield");
 	@_>7 && carp("Ignoring additional arguments");
 
 	my $st=sqrt($term);
-	my $sx=$market / $strike;
+	my $sx=$adj_market / $strike;
 	my $lsx=log($sx) if $sx>0;
-	return (_precompute1($st, $lsx, @_), $st, $lsx);
+	return (
+	  _precompute1(
+	    $st, $lsx, $put, $adj_market, $sigma, $strike, $term,
+	    $interest, $adj_yield
+	  ), $st, $lsx, $adj_market, $adj_yield
+	);
 }
 
 sub call_price {
@@ -366,9 +405,12 @@ sub _implied_volatility {
 	$term>0.0 || croak("Positive term required to determine volatility");
 	$option_price>0.0 || croak("Option price must be positive");
 	my $sigma_low=0.0;
-	my ($price_low, $seyt, $xert, $d1, $st, $lsx) = _precompute(
-	  $put, $market, 0.0, @_[2..$#_]
-	);
+	my ($price_low, $seyt, $xert, $d1, $st, $lsx, $adj_market, $adj_yield) =
+	  _precompute(
+	    $put, $market, 0.0, @_[2..$#_]
+	  );
+	my @precomp_args = @_[2..$#_];
+	$precomp_args[3] = $adj_yield;
 	return wantarray ? (0.0, undef, 0) : 0.0 if $price_low > $option_price;
 	return wantarray ? (undef, undef, 0) : undef
 	  if $option_price > ($put ? $xert : $seyt);
@@ -377,7 +419,7 @@ sub _implied_volatility {
 	my $n=0;
 	while($n<$max_iter) {
 		($price_high, $seyt, $xert, $d1) = _precompute1(
-		  $st, $lsx, $put, $market, $sigma_high, @_[2..$#_]
+		  $st, $lsx, $put, $adj_market, $sigma_high, @precomp_args
 		);
 		last if $price_high > $option_price-$tol;
 		($sigma_low, $price_low) = ($sigma_high, $price_high);
@@ -406,7 +448,7 @@ sub _implied_volatility {
 		$n++;
 		last if $n>=$max_iter;
 		($price, $seyt, $xert, $d1) = _precompute1(
-		  $st, $lsx, $put, $market, $sigma, @_[2..$#_]
+		  $st, $lsx, $put, $adj_market, $sigma, @precomp_args
 		);
 	}
 
@@ -414,7 +456,7 @@ sub _implied_volatility {
 	while($n<$max_iter) {
 		$sigma=0.5 * ($sigma_low + $sigma_high);
 		($price) = _precompute1(
-		  $st, $lsx, $put, $market, $sigma, @_[2..$#_]
+		  $st, $lsx, $put, $adj_market, $sigma, @precomp_args
 		);
 		if(abs($option_price - $price) < $tol) {
 			return wantarray ?
